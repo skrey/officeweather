@@ -6,7 +6,8 @@
 import sys, fcntl, time, rrdtool, os, argparse, socket
 from rrdtool import update as rrd_update
 
-RRDDB_LOC = "/var/local/monitor/co2-temp.rrd"
+#RRDDB_LOC = "/var/local/monitor/co2-temp.rrd"
+RRDDB_LOC = "/var/www/html/co2-temp.rrd"
 GRAPHOUT_DIR = "/var/www/html/images"
 
 def decrypt(key,  data):
@@ -49,20 +50,19 @@ def graphout(period):
         "--vertical-label", "CO2 PPM",
         "--width", "600",
         "-h 200",
-        "-l 0",
+        "-l 500",
+        "-u 2500",
         "DEF:co2_num="+RRDDB_LOC+":CO2:AVERAGE",
         "LINE1:co2_num#0000FF:CO2",
         "GPRINT:co2_num:LAST: Last\\:%8.2lf %s ",
         "GPRINT:co2_num:MIN: Min\\:%8.2lf %s ",
         "GPRINT:co2_num:AVERAGE: Avg\\:%8.2lf %s ",
         "GPRINT:co2_num:MAX: Max\\:%8.2lf %s\\n",
-        "HRULE:500#16F50F:OK",
+        "HRULE:1500#FF952B:OPT-MIN",
         "COMMENT: \\n",
-        "HRULE:800#FF952B:DEV-WARN",
+        "HRULE:2000#3FC0EB:OPT-MAX",
         "COMMENT: \\n",
-        "HRULE:1000#3FC0EB:OFF-WARN",
-        "COMMENT: \\n",
-        "HRULE:1200#DE2C2F:CRIT")
+        "HRULE:1000#DE2C2F:CRIT")
 
     filename = GRAPHOUT_DIR + "/temp-" + period + "-graph.png" 
     rrdtool.graph(filename,
@@ -71,12 +71,36 @@ def graphout(period):
         "--vertical-label", "TEMP C",
         "--width", "600",
         "-h 200",
+        "-l 18",
+        "-u 30",
         "DEF:temp_num="+RRDDB_LOC+":TEMP:AVERAGE",
-        "LINE1:temp_num#00FF00:TEMP",
+        "LINE1:temp_num#0000FF:TEMP",
         "GPRINT:temp_num:LAST: Last\\:%8.2lf %s ",
         "GPRINT:temp_num:MIN: Min\\:%8.2lf %s ",
         "GPRINT:temp_num:AVERAGE: Avg\\:%8.2lf %s ",
-        "GPRINT:temp_num:MAX: Max\\:%8.2lf %s \\n")
+        "GPRINT:temp_num:MAX: Max\\:%8.2lf %s \\n",
+        "HRULE:25#FF952B:OPT-MIN",
+        "COMMENT: \\n",
+        "HRULE:28#3FC0EB:OPT-MAX")
+
+    filename = GRAPHOUT_DIR + "/hum-" + period + "-graph.png" 
+    rrdtool.graph(filename,
+        "--start", "now-"+period, "--end", "now",
+        "--title", "HUMIDITY",
+        "--vertical-label", "HUMIDITY %",
+        "--width", "600",
+        "-h 200",
+        "-l 40",
+        "-u 90",
+        "DEF:hum_num="+RRDDB_LOC+":HUM:AVERAGE",
+        "LINE1:hum_num#0000FF:HUM",
+        "GPRINT:hum_num:LAST: Last\\:%8.2lf %s ",
+        "GPRINT:hum_num:MIN: Min\\:%8.2lf %s ",
+        "GPRINT:hum_num:AVERAGE: Avg\\:%8.2lf %s ",
+        "GPRINT:hum_num:MAX: Max\\:%8.2lf %s \\n",
+        "HRULE:60#FF952B:OPT-MIN",
+        "COMMENT: \\n",
+        "HRULE:70#3FC0EB:OPT-MAX")
 
 if __name__ == "__main__":
     # use lock on socket to indicate that script is already running
@@ -117,6 +141,7 @@ if __name__ == "__main__":
         rddbh = rrdtool.create(RRDDB_LOC, "--step", "300", "--start", '0',
             "DS:CO2:GAUGE:600:U:U",
             "DS:TEMP:GAUGE:600:U:U",
+            "DS:HUM:GAUGE:600:U:U",
             "RRA:AVERAGE:0.5:1:288",
             "RRA:AVERAGE:0.5:3:672",
             "RRA:AVERAGE:0.5:12:744",
@@ -132,6 +157,7 @@ if __name__ == "__main__":
 
     data_encrypted_print = False
     while True:
+        time.sleep(20)
         data = list(fp.read(8))
         if data[4] == 0x0d and (sum(data[:3]) & 0xff) == data[3]:
             decrypted = data
@@ -147,16 +173,17 @@ if __name__ == "__main__":
             val = decrypted[1] << 8 | decrypted[2]
             values[op] = val
 
-            if (0x50 in values) and (0x42 in values):
+            if (0x50 in values) and (0x42 in values) and (0x41 in values):
                 co2 = values[0x50]
                 tmp = (values[0x42]/16.0-273.15)
+                humidity = values[0x41]/100
 
-                sys.stdout.write("CO2: %4i TMP: %3.1f    \r" % (co2, tmp))
+                sys.stdout.write("CO2: %4i ppm TMP: %3.1f C Humidity: %1i%%   \n" % (co2, tmp, humidity))
                 sys.stdout.flush()
             
                 if now() - stamp > 60:
-                    print(">>> sending dataset CO2: %4i TMP: %3.1f .." % (co2, tmp))
-                    rrd_update(RRDDB_LOC, 'N:%s:%s' % (co2, tmp))
+                    print(">>> sending dataset CO2: %4i TMP: %3.1f HUM: %1i.." % (co2, tmp, humidity))
+                    rrd_update(RRDDB_LOC, 'N:%s:%s:%s' % (co2, tmp, humidity))
                     graphout("8h")
                     graphout("24h")
                     graphout("7d")
